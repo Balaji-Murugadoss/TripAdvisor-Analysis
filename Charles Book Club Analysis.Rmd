@@ -1,0 +1,211 @@
+---
+title: "Itom 6253 Programming for Analytics Fall A 2024 - Assignment 1 <Bala Murugadoss>"
+output:
+  html_document: Bala Murugadoss
+  pdf_document: Bala Murugadoss
+  date: "Fall A 2024"
+---
+<!-- name of chunk = set_global_options and include chunk in doc -->
+```{r set_global_options, echo=TRUE}
+ knitr::opts_chunk$set(echo = TRUE)
+```
+The raw data file for this assignment is full of problems. There are missing values, outliers and invalid values (e.g., negative revenue). There are extra commas at the end of each line that cause the creation of empty nonsense variables and a few lines are missing a comma to separate the last two variables. Many lines also have zero purchases for all products.
+
+Before doing any analytics, we must first scrub the raw data to solve these problems. We make use of the **dplyr** and **tidyr** packages for many of the scrubbing tasks.
+
+### Instructions
+This template requires that you replace all of the instances of "***" with your own code. Sometimes you will need to supply just a single keyword or argument to a function, sometimes a single line of code, and sometimes you need to supply multiple lines of code. Do your best and try to run the entire markdown document without errors for submission.
+
+
+
+```{r echo=TRUE}
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(readxl)
+
+cbc <- as.data.frame(read_excel("/Users/balajimurugadoss/Desktop/Assignments/Programming for analytics/Charles_BookClub_modified.xls"))
+cbc <- cbc[,1:18]
+str(cbc)
+summary(cbc)
+
+```
+#### Count the unique values of each variable.
+```{r}
+cbc_counts <- cbc %>% summarise_all(n_distinct)
+cbc_counts
+```
+
+#### Convert Gender and Florence to Factors
+```{r}
+cbc$Gender <- factor(cbc$Gender, levels = c(0,1), labels = c("Female", "Male"))
+cbc$Florence <- factor(cbc$Florence, levels = c(0,1), labels = c("No", "Yes"))
+```
+
+#### Identify the numeric columns for which outlier detection is desired
+```{r}
+outvars <- c("M", "R", "F", "FirstPurch")
+```
+
+
+#### Find outliers and set them to missing
+Note the use of the *anonymous* function in the following code:
+```{r}
+cbc$M <- as.numeric(cbc$M)
+cbc$R <- as.numeric(cbc$R)
+cbc[outvars] <- data.frame(lapply(cbc[outvars], function(x) {
+  ifelse((x < 0) | x > (mean(x, na.rm = TRUE) + 3*sd(x, na.rm = TRUE)), NA, x) }))
+
+```
+
+#### Summary also counts the number of missing values
+```{r}
+
+summary(cbc)
+
+```
+#### Identify variables for which imputation of missing values is desired
+```{r}
+missvars <- c("M", "R", "F")
+```
+
+#### Impute missing values of columns with missing values
+Here's another *anonymous* function use:
+```{r}
+cbc[missvars] <- data.frame(lapply(cbc[missvars], function(x) {
+  ifelse(is.na(x), mean(x, na.rm = TRUE), x) }))
+
+summary(cbc)
+```
+
+#### Delete rows for which there are no books purchased.
+```{r}
+cbc_no_zeroes <- cbc[rowSums(cbc[,8:17]) > 0, ]
+summary(cbc_no_zeroes)
+nrow(cbc)
+nrow(cbc_no_zeroes)
+```
+
+#### Sum the purchases of each book type.
+```{r}
+cbc_sums <- cbc %>% summarise(across(c(8:17), sum))
+cbc_sums
+```
+
+### Histogram plot of numeric variables
+
+```{r}
+library (psych)
+multi.hist(cbc[,c("M", "R", "F", "FirstPurch")],nrow=2,ncol=2, global = FALSE)
+```
+
+### Bar plot of book type sums
+
+```{r}
+cbc_pivot <- pivot_longer(cbc_sums, cols=c(1:10))
+names(cbc_pivot) <- c("Type", "Sum")
+
+ggplot(data=cbc_pivot, aes(y=Sum, x=Type)) +
+  geom_bar(stat = 'identity')
+```
+
+
+### A custom function for calculating 4 moments
+
+```{r}
+library(e1071)
+#browser()
+calcfourstats <- function(x) {
+  mu <- round(mean(x, na.rm= TRUE),2)
+  sigma <- round(sd(x,na.rm= TRUE), 2)
+  skew <- round(skewness(x ,na.rm= TRUE), 3)
+  kurt <- round(kurtosis(x ,na.rm= TRUE), 2)
+  result <- data.frame(mu, sigma, skew, kurt)
+                    
+}
+
+results <- calcfourstats(cbc_no_zeroes[,4])
+results <- rbind(results, calcfourstats(cbc_no_zeroes[,5]))
+#browser()
+results <- rbind(results, calcfourstats(cbc_no_zeroes[,6]))
+results <- rbind(results, calcfourstats(cbc_no_zeroes[,7]))
+varList <- names(cbc_no_zeroes[4:7])
+print(varList)
+```
+
+### Creating RFM factors
+#### Calculate HML cutoffs for RFM
+```{r}
+cbc_rfm <- data.frame(lapply(cbc_no_zeroes[c("R", "F", "M")], 
+  function(x) {
+    quantile(x, probs = c(0.33, 0.67), na.rm = TRUE) }))
+```
+
+Verify results and test subsetting    
+```{r}
+cbc_rfm
+cbc_rfm["33%", "M"] #What is the 33rd percentile of M?
+```
+
+Create three new variables for HML quantiles of RFM variables
+```{r}
+library(dplyr)
+cbcRFM <- cbc_no_zeroes %>%
+  mutate(rRFM = if_else(R <= cbc_rfm[1,"R"], "L",
+                        if_else(R >= cbc_rfm[2,"R"], "H", "M"))) %>%
+  mutate(fRFM = if_else(F <= cbc_rfm[1, "F"], "L",
+                        if_else(F >= cbc_rfm[2, "F"], "H", "M"))) %>%
+  mutate(mRFM = if_else(M <= cbc_rfm[1, "M"], "L",
+                        if_else(M >= cbc_rfm[2, "M"], "H", "M")))
+```
+Convert the new HML variables into ordered factors
+```{r}
+cbcRFM [c("rRFM", "fRFM", "mRFM")] <- data.frame(lapply(cbcRFM[c("rRFM", "fRFM", "mRFM")], 
+  function(x) {
+    factor(x, c("L", "M", "H"), ordered = TRUE)
+  }))
+head(cbcRFM)
+str(cbcRFM)
+
+sumTable <- cbcRFM %>% 
+  group_by(rRFM, fRFM, mRFM) %>%
+  summarize(meanM = round(mean(M), 2))
+
+sumTable
+```
+
+#### Make three tables, one for each level of factor mRFM
+
+```{r, echo=TRUE, message=FALSE, warning=FALSE}
+for (i in c("L", "M", "H")) {
+  shortTable <- xtabs(meanM ~ rRFM + fRFM, sumTable %>% filter(mRFM == i)) 
+    print(paste('Monetary Value Segment =', i))
+    print(shortTable)
+    cat("\n") # Add a blank line between tables
+    
+} 
+  
+```
+
+### Median monetary value per visit by gender
+
+```{r}
+visitValue <- cbcRFM %>%
+  group_by(factor(Gender, labels = c("Female", "Male"))) %>%
+  summarize(medianM = round(median(M / F), 2))
+
+visitValue
+```
+
+#### Bubble plot of M by R by Gender
+
+```{r}
+ggplot(cbcRFM, aes(x = R, y = M, col = factor(Gender, labels = c("Female", "Male")), size = FirstPurch)) +
+  geom_point(alpha = .20) + ggtitle("Bubble plot of M by R by Gender") +
+  
+  labs(x = "Recency", y = "Monetary Value") +
+  facet_wrap(~ factor(Gender, labels = c("Female", "Male")), labeller = label_parsed) +
+  theme(legend.position = "bottom", legend.box = "vertical", 
+        legend.key = element_rect(colour = 'white', fill = 'white'))
+```
+
